@@ -11,6 +11,8 @@
 #include "catch_config.hpp"
 #include "catch_runner_impl.hpp"
 
+#include <iterator>
+
 namespace Catch {
 
     class Command {
