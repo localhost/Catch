@@ -5,18 +5,20 @@
  *  Distributed under the Boost Software License, Version 1.0. (See accompanying
  *  file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
  */
-#ifndef TWOBLUECUBES_INTERNAL_CATCH_RUNNER_HPP_INCLUDED
-#define TWOBLUECUBES_INTERNAL_CATCH_RUNNER_HPP_INCLUDED
+#ifndef TWOBLUECUBES_CATCH_RUNNER_IMPL_HPP_INCLUDED
+#define TWOBLUECUBES_CATCH_RUNNER_IMPL_HPP_INCLUDED
 
 #include "catch_interfaces_runner.h"
 #include "catch_interfaces_reporter.h"
 #include "catch_interfaces_exception.h"
 #include "catch_config.hpp"
 #include "catch_test_registry.hpp"
-#include "catch_test_case_info.hpp"
+#include "catch_test_case_info.h"
 #include "catch_capture.hpp"
 #include "catch_totals.hpp"
-#include "catch_running_test.hpp"
+#include "catch_test_spec.h"
+#include "catch_test_case_tracker.hpp"
+#include "catch_timer.h"
 
 #include <set>
 #include <string>
@@ -24,40 +26,41 @@
 namespace Catch {
 
     class StreamRedirect {
-    
+
     public:
         StreamRedirect( std::ostream& stream, std::string& targetString )
         :   m_stream( stream ),
             m_prevBuf( stream.rdbuf() ),
-            m_targetString( targetString ) 
-        {            
+            m_targetString( targetString )
+        {
             stream.rdbuf( m_oss.rdbuf() );
         }
-        
+
         ~StreamRedirect() {
             m_targetString += m_oss.str();
             m_stream.rdbuf( m_prevBuf );
         }
-        
+
     private:
         std::ostream& m_stream;
         std::streambuf* m_prevBuf;
         std::ostringstream m_oss;
         std::string& m_targetString;
     };
-    
+
     ///////////////////////////////////////////////////////////////////////////
 
-    class Runner : public IResultCapture, public IRunner {
-    
-        Runner( const Runner& );
-        void operator =( const Runner& );
-        
+    class RunContext : public IResultCapture, public IRunner {
+
+        RunContext( RunContext const& );
+        void operator =( RunContext const& );
+
     public:
 
-        explicit Runner( Config& config, const Ptr<IReporter>& reporter )
-        :   m_context( getCurrentMutableContext() ),
-            m_runningTest( NULL ),
+        explicit RunContext( Ptr<IConfig const> const& config, Ptr<IStreamingReporter> const& reporter )
+        :   m_runInfo( config->name() ),
+            m_context( getCurrentMutableContext() ),
+            m_activeTestCase( NULL ),
             m_config( config ),
             m_reporter( reporter ),
             m_prevRunner( &m_context.getRunner() ),
@@ -65,197 +68,185 @@ namespace Catch {
             m_prevConfig( m_context.getConfig() )
         {
             m_context.setRunner( this );
-            m_context.setConfig( &m_config );
+            m_context.setConfig( m_config );
             m_context.setResultCapture( this );
-            m_reporter->StartTesting();
+            m_reporter->testRunStarting( m_runInfo );
         }
-        
-        ~Runner() {
-            m_reporter->EndTesting( m_totals );
+
+        virtual ~RunContext() {
+            m_reporter->testRunEnded( TestRunStats( m_runInfo, m_totals, aborting() ) );
             m_context.setRunner( m_prevRunner );
             m_context.setConfig( NULL );
             m_context.setResultCapture( m_prevResultCapture );
             m_context.setConfig( m_prevConfig );
         }
-        
-        virtual void runAll( bool runHiddenTests = false ) {
-            m_reporter->StartGroup( "" );
-            const std::vector<TestCaseInfo>& allTests = getCurrentContext().getTestCaseRegistry().getAllTests();
-            for( std::size_t i=0; i < allTests.size(); ++i ) {
-                if( runHiddenTests || !allTests[i].isHidden() ) {
-                    if( aborting() ) {
-                        m_reporter->Aborted();
-                        break;
-                    }
-                    runTest( allTests[i] );
-                }
-            }
-            m_reporter->EndGroup( "", getTotals() );
-        }
-        
-        virtual std::size_t runMatching( const std::string& rawTestSpec ) {
 
-            Totals prevTotals = getTotals();
-            m_reporter->StartGroup( rawTestSpec );
-
-            TestSpec testSpec( rawTestSpec );
-            
-            const std::vector<TestCaseInfo>& allTests = getCurrentContext().getTestCaseRegistry().getAllTests();
-            std::size_t testsRun = 0;
-            for( std::size_t i=0; i < allTests.size(); ++i ) {
-                if( testSpec.matches( allTests[i].getName() ) ) {
-                    if( aborting() ) {
-                        m_reporter->Aborted();
-                        break;
-                    }
-                    runTest( allTests[i] );
-                    testsRun++;
-                }
-            }
-            m_reporter->EndGroup( rawTestSpec, getTotals() - prevTotals );
-            return testsRun;
+        void testGroupStarting( std::string const& testSpec, std::size_t groupIndex, std::size_t groupsCount ) {
+            m_reporter->testGroupStarting( GroupInfo( testSpec, groupIndex, groupsCount ) );
         }
-        
-        void runTest( const TestCaseInfo& testInfo ) {
+        void testGroupEnded( std::string const& testSpec, Totals const& totals, std::size_t groupIndex, std::size_t groupsCount ) {
+            m_reporter->testGroupEnded( TestGroupStats( GroupInfo( testSpec, groupIndex, groupsCount ), totals, aborting() ) );
+        }
+
+        Totals runMatching( std::string const& testSpec, std::size_t groupIndex, std::size_t groupsCount ) {
+
+            std::vector<TestCase> matchingTests = getRegistryHub().getTestCaseRegistry().getMatchingTestCases( testSpec );
+
+            Totals totals;
+
+            testGroupStarting( testSpec, groupIndex, groupsCount );
+
+            std::vector<TestCase>::const_iterator it = matchingTests.begin();
+            std::vector<TestCase>::const_iterator itEnd = matchingTests.end();
+            for(; it != itEnd; ++it )
+                totals += runTest( *it );
+
+            testGroupEnded( testSpec, totals, groupIndex, groupsCount );
+            return totals;
+        }
+
+        Totals runTest( TestCase const& testCase ) {
             Totals prevTotals = m_totals;
 
             std::string redirectedCout;
             std::string redirectedCerr;
-            
-            m_reporter->StartTestCase( testInfo );
-            
-            m_runningTest = new RunningTest( &testInfo );
+
+            TestCaseInfo testInfo = testCase.getTestCaseInfo();
+
+            m_reporter->testCaseStarting( testInfo );
+
+            m_activeTestCase = &testCase;
+            m_testCaseTracker = TestCaseTracker( testInfo.name );
 
             do {
                 do {
-//                    m_reporter->StartGroup( "test case run" );
-                    m_currentResult.setLineInfo( m_runningTest->getTestCaseInfo().getLineInfo() );
                     runCurrentTest( redirectedCout, redirectedCerr );
-//                    m_reporter->EndGroup( "test case run", m_totals.delta( prevTotals ) );
                 }
-                while( m_runningTest->hasUntestedSections() && !aborting() );
+                while( !m_testCaseTracker->isCompleted() && !aborting() );
             }
             while( getCurrentContext().advanceGeneratorsForCurrentTest() && !aborting() );
 
-            delete m_runningTest;
-            m_runningTest = NULL;
-
             Totals deltaTotals = m_totals.delta( prevTotals );
-            m_totals.testCases += deltaTotals.testCases;            
-            m_reporter->EndTestCase( testInfo, deltaTotals, redirectedCout, redirectedCerr );
+            m_totals.testCases += deltaTotals.testCases;
+            m_reporter->testCaseEnded( TestCaseStats(   testInfo,
+                                                        deltaTotals,
+                                                        redirectedCout,
+                                                        redirectedCerr,
+                                                        aborting() ) );
+
+            m_activeTestCase = NULL;
+            m_testCaseTracker.reset();
+
+            return deltaTotals;
         }
 
-        virtual Totals getTotals() const {
-            return m_totals;
-        }
-        
-        const Config& config() const {
+        Ptr<IConfig const> config() const {
             return m_config;
         }
-        
+
     private: // IResultCapture
 
-        virtual ResultAction::Value acceptResult( bool result ) {
-            return acceptResult( result ? ResultWas::Ok : ResultWas::ExpressionFailed );
+        virtual ResultAction::Value acceptExpression( ExpressionResultBuilder const& assertionResult, AssertionInfo const& assertionInfo ) {
+            m_lastAssertionInfo = assertionInfo;
+            return actOnCurrentResult( assertionResult.buildResult( assertionInfo ) );
         }
 
-        virtual ResultAction::Value acceptResult( ResultWas::OfType result ) {
-            m_currentResult.setResultType( result );            
-            return actOnCurrentResult();
-        }
-
-        virtual ResultAction::Value acceptExpression( const ResultInfoBuilder& resultInfo ) {
-            m_currentResult = resultInfo;
-            return actOnCurrentResult();
-        }
-
-        virtual void acceptMessage( const std::string& msg ) {
-            m_currentResult.setMessage( msg );
-        }
-                
-        virtual void testEnded( const ResultInfo& result ) {
+        virtual void assertionEnded( AssertionResult const& result ) {
             if( result.getResultType() == ResultWas::Ok ) {
                 m_totals.assertions.passed++;
             }
-            else if( !result.ok() ) {
+            else if( !result.isOk() ) {
                 m_totals.assertions.failed++;
-
-                std::vector<ResultInfo>::const_iterator it = m_info.begin();
-                std::vector<ResultInfo>::const_iterator itEnd = m_info.end();
-                for(; it != itEnd; ++it )
-                    m_reporter->Result( *it );
-                m_info.clear();
             }
-            
-            if( result.getResultType() == ResultWas::Info )
-                m_info.push_back( result );
-            else
-                m_reporter->Result( result );
+
+            if( m_reporter->assertionEnded( AssertionStats( result, m_messages, m_totals ) ) )
+                m_messages.clear();
+
+            // Reset working state
+            m_lastAssertionInfo = AssertionInfo( "", m_lastAssertionInfo.lineInfo, "{Unknown expression after the reported line}" , m_lastAssertionInfo.resultDisposition );
         }
-        
+
         virtual bool sectionStarted (
-            const std::string& name, 
-            const std::string& description,
-            const SourceLineInfo& lineInfo,
+            SectionInfo const& sectionInfo,
             Counts& assertions
         )
         {
             std::ostringstream oss;
-            oss << name << "@" << lineInfo;
+            oss << sectionInfo.name << "@" << sectionInfo.lineInfo;
 
-            if( !m_runningTest->addSection( oss.str() ) )
+            if( !m_testCaseTracker->enterSection( oss.str() ) )
                 return false;
 
-            m_currentResult.setLineInfo( lineInfo );
-            m_reporter->StartSection( name, description );
+            m_lastAssertionInfo.lineInfo = sectionInfo.lineInfo;
+
+            m_reporter->sectionStarting( sectionInfo );
+
             assertions = m_totals.assertions;
-            
+
             return true;
         }
-        
-        virtual void sectionEnded( const std::string& name, const Counts& prevAssertions ) {
-            m_runningTest->endSection( name );
-            m_reporter->EndSection( name, m_totals.assertions - prevAssertions );
+        bool testForMissingAssertions( Counts& assertions ) {
+            if( assertions.total() != 0 ||
+                    !m_config->warnAboutMissingAssertions() ||
+                    m_testCaseTracker->currentSectionHasChildren() )
+                return false;
+            m_totals.assertions.failed++;
+            assertions.failed++;
+            return true;
         }
 
-        virtual void pushScopedInfo( ScopedInfo* scopedInfo ) {
-            m_scopedInfos.push_back( scopedInfo );
+        virtual void sectionEnded( SectionInfo const& info, Counts const& prevAssertions, double _durationInSeconds ) {
+            if( std::uncaught_exception() ) {
+                m_unfinishedSections.push_back( UnfinishedSections( info, prevAssertions, _durationInSeconds ) );
+                return;
+            }
+
+            Counts assertions = m_totals.assertions - prevAssertions;
+            bool missingAssertions = testForMissingAssertions( assertions );
+
+            m_testCaseTracker->leaveSection();
+
+            m_reporter->sectionEnded( SectionStats( info, assertions, _durationInSeconds, missingAssertions ) );
+            m_messages.clear();
         }
 
-        virtual void popScopedInfo( ScopedInfo* scopedInfo ) {
-            if( m_scopedInfos.back() == scopedInfo )
-                m_scopedInfos.pop_back();
+        virtual void pushScopedMessage( MessageInfo const& message ) {
+            m_messages.push_back( message );
         }
 
-        virtual bool shouldDebugBreak() const {        
-            return m_config.shouldDebugBreak();
+        virtual void popScopedMessage( MessageInfo const& message ) {
+            m_messages.erase( std::remove( m_messages.begin(), m_messages.end(), message ), m_messages.end() );
+        }
+
+        virtual bool shouldDebugBreak() const {
+            return m_config->shouldDebugBreak();
         }
 
         virtual std::string getCurrentTestName() const {
-            return m_runningTest
-                ? m_runningTest->getTestCaseInfo().getName()
+            return m_activeTestCase
+                ? m_activeTestCase->getTestCaseInfo().name
                 : "";
         }
 
-        virtual const ResultInfo* getLastResult() const {
-            return &m_lastResult;            
+        virtual const AssertionResult* getLastResult() const {
+            return &m_lastResult;
         }
-        
+
+    public:
+        // !TBD We need to do this another way!
+        bool aborting() const {
+            return m_totals.assertions.failed == static_cast<std::size_t>( m_config->abortAfter() );
+        }
+
     private:
 
-        bool aborting() const {
-            return m_totals.assertions.failed == static_cast<std::size_t>( m_config.getCutoff() );
-        }
-        
-        ResultAction::Value actOnCurrentResult() {
-            testEnded( m_currentResult );
-            m_lastResult = m_currentResult;
-            
-            m_currentResult = ResultInfoBuilder();
+        ResultAction::Value actOnCurrentResult( AssertionResult const& result ) {
+            m_lastResult = result;
+            assertionEnded( m_lastResult );
 
             ResultAction::Value action = ResultAction::None;
-            
-            if( !m_lastResult.ok() ) {
+
+            if( !m_lastResult.isOk() ) {
                 action = ResultAction::Failed;
                 if( shouldDebugBreak() )
                     action = (ResultAction::Value)( action | ResultAction::Debug );
@@ -266,44 +257,80 @@ namespace Catch {
         }
 
         void runCurrentTest( std::string& redirectedCout, std::string& redirectedCerr ) {
+            TestCaseInfo const& testCaseInfo = m_activeTestCase->getTestCaseInfo();
+            SectionInfo testCaseSection( testCaseInfo.name, testCaseInfo.description, testCaseInfo.lineInfo );
+            m_reporter->sectionStarting( testCaseSection );
+            Counts prevAssertions = m_totals.assertions;
+            double duration = 0;
             try {
-                m_runningTest->reset();
-                if( m_reporter->shouldRedirectStdout() ) {
+                m_lastAssertionInfo = AssertionInfo( "TEST_CASE", testCaseInfo.lineInfo, "", ResultDisposition::Normal );
+                TestCaseTracker::Guard guard( *m_testCaseTracker );
+
+                Timer timer;
+                timer.start();
+                if( m_reporter->getPreferences().shouldRedirectStdOut ) {
                     StreamRedirect coutRedir( std::cout, redirectedCout );
                     StreamRedirect cerrRedir( std::cerr, redirectedCerr );
-                    m_runningTest->getTestCaseInfo().invoke();
+                    m_activeTestCase->invoke();
                 }
                 else {
-                    m_runningTest->getTestCaseInfo().invoke();
+                    m_activeTestCase->invoke();
                 }
-                m_runningTest->ranToCompletion();
+                duration = timer.getElapsedSeconds();
             }
             catch( TestFailureException& ) {
                 // This just means the test was aborted due to failure
             }
             catch(...) {
-                acceptMessage( getCurrentContext().getExceptionTranslatorRegistry().translateActiveException() );
-                acceptResult( ResultWas::ThrewException );
+                ExpressionResultBuilder exResult( ResultWas::ThrewException );
+                exResult << translateActiveException();
+                actOnCurrentResult( exResult.buildResult( m_lastAssertionInfo )  );
             }
-            m_info.clear();
+            // If sections ended prematurely due to an exception we stored their
+            // infos here so we can tear them down outside the unwind process.
+            for( std::vector<UnfinishedSections>::const_iterator it = m_unfinishedSections.begin(),
+                        itEnd = m_unfinishedSections.end();
+                    it != itEnd;
+                    ++it )
+                sectionEnded( it->info, it->prevAssertions, it->durationInSeconds );
+            m_unfinishedSections.clear();
+            m_messages.clear();
+
+            Counts assertions = m_totals.assertions - prevAssertions;
+            bool missingAssertions = testForMissingAssertions( assertions );
+
+            SectionStats testCaseSectionStats( testCaseSection, assertions, duration, missingAssertions );
+            m_reporter->sectionEnded( testCaseSectionStats );
         }
 
     private:
-        IMutableContext& m_context;
-        RunningTest* m_runningTest;
-        ResultInfoBuilder m_currentResult;
-        ResultInfo m_lastResult;
+        struct UnfinishedSections {
+            UnfinishedSections( SectionInfo const& _info, Counts const& _prevAssertions, double _durationInSeconds )
+            : info( _info ), prevAssertions( _prevAssertions ), durationInSeconds( _durationInSeconds )
+            {}
 
-        const Config& m_config;
+            SectionInfo info;
+            Counts prevAssertions;
+            double durationInSeconds;
+        };
+
+        TestRunInfo m_runInfo;
+        IMutableContext& m_context;
+        TestCase const* m_activeTestCase;
+        Option<TestCaseTracker> m_testCaseTracker;
+        AssertionResult m_lastResult;
+
+        Ptr<IConfig const> m_config;
         Totals m_totals;
-        Ptr<IReporter> m_reporter;
-        std::vector<ScopedInfo*> m_scopedInfos;
-        std::vector<ResultInfo> m_info;
+        Ptr<IStreamingReporter> m_reporter;
+        std::vector<MessageInfo> m_messages;
         IRunner* m_prevRunner;
         IResultCapture* m_prevResultCapture;
-        const IConfig* m_prevConfig;
+        Ptr<IConfig const> m_prevConfig;
+        AssertionInfo m_lastAssertionInfo;
+        std::vector<UnfinishedSections> m_unfinishedSections;
     };
-    
+
 } // end namespace Catch
 
-#endif // TWOBLUECUBES_INTERNAL_CATCH_RUNNER_HPP_INCLUDED
+#endif // TWOBLUECUBES_CATCH_RUNNER_IMPL_HPP_INCLUDED

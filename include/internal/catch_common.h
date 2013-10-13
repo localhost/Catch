@@ -15,26 +15,22 @@
 #define INTERNAL_CATCH_STRINGIFY2( expr ) #expr
 #define INTERNAL_CATCH_STRINGIFY( expr ) INTERNAL_CATCH_STRINGIFY2( expr )
 
-#ifdef __GNUC__
-#define ATTRIBUTE_NORETURN __attribute__ ((noreturn))
-#else
-#define ATTRIBUTE_NORETURN
-#endif
-
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
 
+#include "catch_compiler_capabilities.h"
+
 namespace Catch {
 
-	class NonCopyable {
-		NonCopyable( const NonCopyable& );
-		void operator = ( const NonCopyable& );
-	protected:
-		NonCopyable() {}
-		virtual ~NonCopyable() {}
-	};
-    
+    class NonCopyable {
+        NonCopyable( NonCopyable const& );
+        void operator = ( NonCopyable const& );
+    protected:
+        NonCopyable() {}
+        virtual ~NonCopyable();
+    };
+
     class SafeBool {
     public:
         typedef void (SafeBool::*type)() const;
@@ -45,86 +41,110 @@ namespace Catch {
     private:
         void trueValue() const {}
     };
-  
+
     template<typename ContainerT>
     inline void deleteAll( ContainerT& container ) {
         typename ContainerT::const_iterator it = container.begin();
         typename ContainerT::const_iterator itEnd = container.end();
         for(; it != itEnd; ++it )
-        {
             delete *it;
-        }
     }
     template<typename AssociativeContainerT>
     inline void deleteAllValues( AssociativeContainerT& container ) {
         typename AssociativeContainerT::const_iterator it = container.begin();
         typename AssociativeContainerT::const_iterator itEnd = container.end();
         for(; it != itEnd; ++it )
-        {
             delete it->second;
-        }
     }
-    
+
     template<typename ContainerT, typename Function>
     inline void forEach( ContainerT& container, Function function ) {
         std::for_each( container.begin(), container.end(), function );
     }
-    
+
     template<typename ContainerT, typename Function>
-    inline void forEach( const ContainerT& container, Function function ) {
+    inline void forEach( ContainerT const& container, Function function ) {
         std::for_each( container.begin(), container.end(), function );
     }
-    
+
+    inline bool startsWith( std::string const& s, std::string const& prefix ) {
+        return s.size() >= prefix.size() && s.substr( 0, prefix.size() ) == prefix;
+    }
+    inline bool endsWith( std::string const& s, std::string const& suffix ) {
+        return s.size() >= suffix.size() && s.substr( s.size()-suffix.size(), suffix.size() ) == suffix;
+    }
+    inline bool contains( std::string const& s, std::string const& infix ) {
+        return s.find( infix ) != std::string::npos;
+    }
+    inline void toLowerInPlace( std::string& s ) {
+        std::transform( s.begin(), s.end(), s.begin(), ::tolower );
+    }
+    inline std::string toLower( std::string const& s ) {
+        std::string lc = s;
+        toLowerInPlace( lc );
+        return lc;
+    }
+
+    struct pluralise {
+        pluralise( std::size_t count, std::string const& label )
+        :   m_count( count ),
+            m_label( label )
+        {}
+
+        friend std::ostream& operator << ( std::ostream& os, pluralise const& pluraliser ) {
+            os << pluraliser.m_count << " " << pluraliser.m_label;
+            if( pluraliser.m_count != 1 )
+                os << "s";
+            return os;
+        }
+
+        std::size_t m_count;
+        std::string m_label;
+    };
+
     struct SourceLineInfo {
-    
+
         SourceLineInfo() : line( 0 ){}
-        SourceLineInfo( const std::string& _file, std::size_t _line )
+        SourceLineInfo( std::string const& _file, std::size_t _line )
         :   file( _file ),
             line( _line )
         {}
-        SourceLineInfo( const std::string& _function, const std::string& _file, std::size_t _line )
-        :   function( _function ),
-            file( _file ),
-            line( _line )
-        {}
-        SourceLineInfo( const SourceLineInfo& other )
+        SourceLineInfo( SourceLineInfo const& other )
         :   file( other.file ),
             line( other.line )
         {}
-        void swap( SourceLineInfo& other ){
-            file.swap( other.file );
-            std::swap( line, other.line );
+        bool empty() const {
+            return file.empty();
         }
-        
-        std::string function;
+        bool operator == ( SourceLineInfo const& other ) const {
+            return line == other.line && file == other.file;
+        }
         std::string file;
-        std::size_t line;        
+        std::size_t line;
     };
-    
-    inline std::ostream& operator << ( std::ostream& os, const SourceLineInfo& info ) {
+
+    inline std::ostream& operator << ( std::ostream& os, SourceLineInfo const& info ) {
 #ifndef __GNUG__
-        os << info.file << "(" << info.line << "): ";
-#else                
-        os << info.file << ":" << info.line << ": ";            
-#endif            
+        os << info.file << "(" << info.line << ")";
+#else
+        os << info.file << ":" << info.line;
+#endif
         return os;
     }
-    
-    ATTRIBUTE_NORETURN
-    inline void throwLogicError( const std::string& message, const std::string& file, std::size_t line ) {
+
+    // This is just here to avoid compiler warnings with macro constants and boolean literals
+    inline bool isTrue( bool value ){ return value; }
+
+    inline void throwLogicError( std::string const& message, SourceLineInfo const& locationInfo ) {
         std::ostringstream oss;
-        oss << "Internal Catch error: '" << message << "' at: " << SourceLineInfo( file, line );
-        throw std::logic_error( oss.str() );
+        oss << locationInfo << ": Internal Catch error: '" << message << "'";
+        if( isTrue( true ))
+            throw std::logic_error( oss.str() );
     }
 }
 
-#define CATCH_INTERNAL_ERROR( msg ) throwLogicError( msg, __FILE__, __LINE__ );
-
-//#ifdef __FUNCTION__
-//#define CATCH_INTERNAL_LINEINFO ::Catch::SourceLineInfo( __FUNCTION__, __FILE__, __LINE__ )
-//#else
-#define CATCH_INTERNAL_LINEINFO ::Catch::SourceLineInfo( __FILE__, __LINE__ )
-//#endif
+#define CATCH_INTERNAL_LINEINFO ::Catch::SourceLineInfo( __FILE__, static_cast<std::size_t>( __LINE__ ) )
+#define CATCH_INTERNAL_ERROR( msg ) ::Catch::throwLogicError( msg, CATCH_INTERNAL_LINEINFO );
 
 #endif // TWOBLUECUBES_CATCH_COMMON_H_INCLUDED
 

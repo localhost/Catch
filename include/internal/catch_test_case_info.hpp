@@ -1,129 +1,127 @@
 /*
- *  Created by Phil on 29/10/2010.
- *  Copyright 2010 Two Blue Cubes Ltd. All rights reserved.
+ *  Created by Phil on 14/08/2012.
+ *  Copyright 2012 Two Blue Cubes Ltd. All rights reserved.
  *
  *  Distributed under the Boost Software License, Version 1.0. (See accompanying
  *  file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
  */
-#ifndef TWOBLUECUBES_CATCH_TESTCASEINFO_HPP_INCLUDED
-#define TWOBLUECUBES_CATCH_TESTCASEINFO_HPP_INCLUDED
+#ifndef TWOBLUECUBES_CATCH_TEST_CASE_INFO_HPP_INCLUDED
+#define TWOBLUECUBES_CATCH_TEST_CASE_INFO_HPP_INCLUDED
 
-#include "catch_common.h"
+#include "catch_tags.hpp"
+#include "catch_test_case_info.h"
 #include "catch_interfaces_testcase.h"
-#include <map>
-#include <string>
+#include "catch_common.h"
 
 namespace Catch {
 
-    class TestCaseInfo {
-    public:
-        TestCaseInfo(   ITestCase* testCase, 
-                        const char* name, 
-                        const char* description,
-                        const SourceLineInfo& lineInfo )
-        :   m_test( testCase ),
-            m_name( name ),
-            m_description( description ),
-            m_lineInfo( lineInfo )
-        {}
+    TestCase makeTestCase(  ITestCase* _testCase,
+                            std::string const& _className,
+                            std::string const& _name,
+                            std::string const& _descOrTags,
+                            SourceLineInfo const& _lineInfo )
+    {
+        std::string desc = _descOrTags;
+        bool isHidden( startsWith( _name, "./" ) );
+        std::set<std::string> tags;
+        TagExtracter( tags ).parse( desc );
+        if( tags.find( "hide" ) != tags.end() || tags.find( "." ) != tags.end() )
+            isHidden = true;
 
-        TestCaseInfo() 
-        :   m_test( NULL ),
-            m_name(),
-            m_description()
-        {}
-        
-        TestCaseInfo( const TestCaseInfo& other )
-        :   m_test( other.m_test->clone() ),
-            m_name( other.m_name ),
-            m_description( other.m_description ),
-            m_lineInfo( other.m_lineInfo )
-        {}
-        
-        TestCaseInfo( const TestCaseInfo& other, const std::string& name )
-        :   m_test( other.m_test->clone() ),
-            m_name( name ),
-            m_description( other.m_description ),
-            m_lineInfo( other.m_lineInfo )
-        {}
-        
-        TestCaseInfo& operator = ( const TestCaseInfo& other ) {
-            TestCaseInfo temp( other );
-            swap( temp );
-            return *this;
-        }
-        
-        ~TestCaseInfo() {
-            delete m_test;
-        }
-        
-        void invoke() const {
-            m_test->invoke();
-        }
-        
-        const std::string& getName() const {
-            return m_name;
-        }
+        TestCaseInfo info( _name, _className, desc, tags, isHidden, _lineInfo );
+        return TestCase( _testCase, info );
+    }
 
-        const std::string& getDescription() const {
-            return m_description;
-        }
+    TestCaseInfo::TestCaseInfo( std::string const& _name,
+                                std::string const& _className,
+                                std::string const& _description,
+                                std::set<std::string> const& _tags,
+                                bool _isHidden,
+                                SourceLineInfo const& _lineInfo )
+    :   name( _name ),
+        className( _className ),
+        description( _description ),
+        tags( _tags ),
+        lineInfo( _lineInfo ),
+        isHidden( _isHidden )
+    {
+        std::ostringstream oss;
+        for( std::set<std::string>::const_iterator it = _tags.begin(), itEnd = _tags.end(); it != itEnd; ++it )
+            oss << "[" << *it << "]";
+        tagsAsString = oss.str();
+    }
 
-        const SourceLineInfo& getLineInfo() const {
-            return m_lineInfo;
-        }
+    TestCaseInfo::TestCaseInfo( TestCaseInfo const& other )
+    :   name( other.name ),
+        className( other.className ),
+        description( other.description ),
+        tags( other.tags ),
+        tagsAsString( other.tagsAsString ),
+        lineInfo( other.lineInfo ),
+        isHidden( other.isHidden )
+    {}
 
-        bool isHidden() const {
-            return m_name.size() >= 2 && m_name[0] == '.' && m_name[1] == '/';
-        }        
-        
-        void swap( TestCaseInfo& other ) {
-            std::swap( m_test, other.m_test );
-            m_name.swap( other.m_name );
-            m_description.swap( other.m_description );
-            m_lineInfo.swap( other.m_lineInfo );
-        }
-        
-        bool operator == ( const TestCaseInfo& other ) const {
-            return *m_test == *other.m_test && m_name == other.m_name;
-        }
-        
-        bool operator < ( const TestCaseInfo& other ) const {
-            return m_name < other.m_name;
-        }
+    TestCase::TestCase( ITestCase* testCase, TestCaseInfo const& info ) : TestCaseInfo( info ), test( testCase ) {}
 
-    private:
-        ITestCase* m_test;
-        std::string m_name;
-        std::string m_description;
-        SourceLineInfo m_lineInfo;        
-    };
-    
-    ///////////////////////////////////////////////////////////////////////////    
-    
-    class TestSpec {
-    public:
-        TestSpec( const std::string& rawSpec )
-        :   m_rawSpec( rawSpec ),
-            m_isWildcarded( false ) {
-            
-            if( m_rawSpec[m_rawSpec.size()-1] == '*' ) {
-                m_rawSpec = m_rawSpec.substr( 0, m_rawSpec.size()-1 );
-                m_isWildcarded = true;
-            }
-        }
-        
-        bool matches ( const std::string& testName ) const {
-            if( !m_isWildcarded )
-                return m_rawSpec == testName;
-            else
-                return testName.size() >= m_rawSpec.size() && testName.substr( 0, m_rawSpec.size() ) == m_rawSpec;            
-        }
-        
-    private:
-        std::string m_rawSpec;
-        bool m_isWildcarded;
-    };
-}
+    TestCase::TestCase( TestCase const& other )
+    :   TestCaseInfo( other ),
+        test( other.test )
+    {}
 
-#endif // TWOBLUECUBES_CATCH_TESTCASEINFO_HPP_INCLUDED
+    TestCase TestCase::withName( std::string const& _newName ) const {
+        TestCase other( *this );
+        other.name = _newName;
+        return other;
+    }
+
+    void TestCase::invoke() const {
+        test->invoke();
+    }
+
+    bool TestCase::isHidden() const {
+        return TestCaseInfo::isHidden;
+    }
+
+    bool TestCase::hasTag( std::string const& tag ) const {
+        return tags.find( toLower( tag ) ) != tags.end();
+    }
+    bool TestCase::matchesTags( std::string const& tagPattern ) const {
+        TagExpression exp;
+        TagExpressionParser( exp ).parse( tagPattern );
+        return exp.matches( tags );
+    }
+    std::set<std::string> const& TestCase::getTags() const {
+        return tags;
+    }
+
+    void TestCase::swap( TestCase& other ) {
+        test.swap( other.test );
+        className.swap( other.className );
+        name.swap( other.name );
+        description.swap( other.description );
+        std::swap( lineInfo, other.lineInfo );
+    }
+
+    bool TestCase::operator == ( TestCase const& other ) const {
+        return  test.get() == other.test.get() &&
+                name == other.name &&
+                className == other.className;
+    }
+
+    bool TestCase::operator < ( TestCase const& other ) const {
+        return name < other.name;
+    }
+    TestCase& TestCase::operator = ( TestCase const& other ) {
+        TestCase temp( other );
+        swap( temp );
+        return *this;
+    }
+
+    TestCaseInfo const& TestCase::getTestCaseInfo() const
+    {
+        return *this;
+    }
+
+} // end namespace Catch
+
+#endif // TWOBLUECUBES_CATCH_TEST_CASE_INFO_HPP_INCLUDED

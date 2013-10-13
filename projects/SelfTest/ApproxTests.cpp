@@ -1,13 +1,9 @@
 /*
- *  ApproxTests.cpp
- *  Catch - Test
- *
  *  Created by Phil on 28/04/2011.
  *  Copyright 2011 Two Blue Cubes Ltd. All rights reserved.
  *
  *  Distributed under the Boost Software License, Version 1.0. (See accompanying
  *  file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
- *
  */
 
 #include "catch.hpp"
@@ -105,3 +101,12 @@ TEST_CASE
     REQUIRE( approx( d ) != 1.25 );
 }
 
+inline double divide( double a, double b ) {
+    return a/b;
+}
+
+TEST_CASE( "Approximate PI", "[Approx][PI]" )
+{
+    REQUIRE( divide( 22, 7 ) == Approx( 3.141 ).epsilon( 0.001 ) );
+    REQUIRE( divide( 22, 7 ) != Approx( 3.141 ).epsilon( 0.0001 ) );
+}

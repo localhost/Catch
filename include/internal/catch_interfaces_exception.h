@@ -5,24 +5,24 @@
  *  Distributed under the Boost Software License, Version 1.0. (See accompanying
  *  file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
  */
-#ifndef TWOBLUECUBES_CATCH_INTERFACES_EXCEPTIONS_H_INCLUDED
-#define TWOBLUECUBES_CATCH_INTERFACES_EXCEPTIONS_H_INCLUDED
+#ifndef TWOBLUECUBES_CATCH_INTERFACES_EXCEPTION_H_INCLUDED
+#define TWOBLUECUBES_CATCH_INTERFACES_EXCEPTION_H_INCLUDED
 
 #include <string>
-                                              
+#include "catch_interfaces_registry_hub.h"
+
 namespace Catch {
-    
+
     typedef std::string(*exceptionTranslateFunction)();
 
     struct IExceptionTranslator {
-        virtual ~IExceptionTranslator(){}
+        virtual ~IExceptionTranslator();
         virtual std::string translate() const = 0;
     };
-    
+
     struct IExceptionTranslatorRegistry {
-        virtual ~IExceptionTranslatorRegistry(){}
-        
-        virtual void registerTranslator( IExceptionTranslator* translator ) = 0;
+        virtual ~IExceptionTranslatorRegistry();
+
         virtual std::string translateActiveException() const = 0;
     };
 
@@ -30,11 +30,11 @@ namespace Catch {
         template<typename T>
         class ExceptionTranslator : public IExceptionTranslator {
         public:
-            
+
             ExceptionTranslator( std::string(*translateFunction)( T& ) )
             : m_translateFunction( translateFunction )
             {}
-            
+
             virtual std::string translate() const {
                 try {
                     throw;
@@ -43,15 +43,15 @@ namespace Catch {
                     return m_translateFunction( ex );
                 }
             }
-            
+
         protected:
             std::string(*m_translateFunction)( T& );
         };
-        
+
     public:
         template<typename T>
         ExceptionTranslatorRegistrar( std::string(*translateFunction)( T& ) ) {
-            getCurrentContext().getExceptionTranslatorRegistry().registerTranslator
+            getMutableRegistryHub().registerTranslator
                 ( new ExceptionTranslator<T>( translateFunction ) );
         }
     };
@@ -63,4 +63,4 @@ namespace Catch {
     namespace{ Catch::ExceptionTranslatorRegistrar INTERNAL_CATCH_UNIQUE_NAME( catch_internal_ExceptionRegistrar )( &INTERNAL_CATCH_UNIQUE_NAME( catch_internal_ExceptionTranslator ) ); }\
     static std::string INTERNAL_CATCH_UNIQUE_NAME(  catch_internal_ExceptionTranslator )( signature )
 
-#endif // TWOBLUECUBES_CATCH_INTERFACES_EXCEPTIONS_H_INCLUDED
+#endif // TWOBLUECUBES_CATCH_INTERFACES_EXCEPTION_H_INCLUDED

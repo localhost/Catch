@@ -8,13 +8,12 @@
 #ifndef TWOBLUECUBES_CATCH_RUNNER_HPP_INCLUDED
 #define TWOBLUECUBES_CATCH_RUNNER_HPP_INCLUDED
 
-#include "internal/catch_context_impl.hpp"
-
 #include "internal/catch_commandline.hpp"
 #include "internal/catch_list.hpp"
-#include "reporters/catch_reporter_basic.hpp"
-#include "reporters/catch_reporter_xml.hpp"
-#include "reporters/catch_reporter_junit.hpp"
+#include "internal/catch_runner_impl.hpp"
+#include "internal/catch_test_spec.h"
+#include "internal/catch_version.h"
+#include "internal/catch_text.h"
 
 #include <fstream>
 #include <stdlib.h>
@@ -22,126 +21,217 @@
 
 namespace Catch {
 
-    INTERNAL_CATCH_REGISTER_REPORTER( "basic", BasicReporter )
-    INTERNAL_CATCH_REGISTER_REPORTER( "xml", XmlReporter )
-    INTERNAL_CATCH_REGISTER_REPORTER( "junit", JunitReporter )
-    
-    inline int Main( Config& config ) {
-    
-        std::string reporterName = config.data().reporter.empty()
-            ? "basic"
-            : config.data().reporter;
-            
-        ReporterConfig reporterConfig( config.getName(), config.stream(), config.includeSuccessfulResults() );
-        
-        Ptr<IReporter> reporter = getCurrentContext().getReporterRegistry().create( reporterName, reporterConfig );
+    class Runner {
 
-        if( !config.data().stream.empty() ) {
-            if( config.data().stream[0] == '%' )
-                config.useStream( config.data().stream.substr( 1 ) );
-            else
-                config.setFilename( config.data().stream );
-        }
-
-        // Handle list request
-        if( config.listWhat() != List::None )
-            return List( config );
-        
-        // Open output file, if specified
-        std::ofstream ofs;
-        if( !config.getFilename().empty() ) {
-            ofs.open( config.getFilename().c_str() );
-            if( ofs.fail() ) {
-                std::cerr << "Unable to open file: '" << config.getFilename() << "'" << std::endl;
-                return (std::numeric_limits<int>::max)();
-            }
-            config.setStreamBuf( ofs.rdbuf() );
-        }
-
-        int result = 0;
-        
-        // Scope here for the Runner so it can use the context before it is cleaned-up
+    public:
+        Runner( Ptr<Config> const& config )
+        :   m_config( config )
         {
-            Runner runner( config, reporter );
+            openStream();
+            makeReporter();
+        }
 
-            // Run test specs specified on the command line - or default to all
-            if( !config.testsSpecified() ) {
-                runner.runAll();
+        Totals runTests() {
+
+            std::vector<TestCaseFilters> filterGroups = m_config->filters();
+            if( filterGroups.empty() ) {
+                TestCaseFilters filterGroup( "" );
+                filterGroups.push_back( filterGroup );
             }
-            else {
-                // !TBD We should get all the testcases upfront, report any missing,
-                // then just run them
-                std::vector<std::string>::const_iterator it = config.getTestSpecs().begin();
-                std::vector<std::string>::const_iterator itEnd = config.getTestSpecs().end();
-                for(; it != itEnd; ++it ) {
-                    if( runner.runMatching( *it ) == 0 ) {
-                        std::cerr << "\n[No test cases matched with: " << *it << "]" << std::endl;
+
+            RunContext context( m_config.get(), m_reporter );
+
+            Totals totals;
+
+            for( std::size_t i=0; i < filterGroups.size() && !context.aborting(); ++i ) {
+                context.testGroupStarting( filterGroups[i].getName(), i, filterGroups.size() );
+                totals += runTestsForGroup( context, filterGroups[i] );
+                context.testGroupEnded( filterGroups[i].getName(), totals, i, filterGroups.size() );
+            }
+            return totals;
+        }
+
+        Totals runTestsForGroup( RunContext& context, const TestCaseFilters& filterGroup ) {
+            Totals totals;
+            std::vector<TestCase>::const_iterator it = getRegistryHub().getTestCaseRegistry().getAllTests().begin();
+            std::vector<TestCase>::const_iterator itEnd = getRegistryHub().getTestCaseRegistry().getAllTests().end();
+            int testsRunForGroup = 0;
+            for(; it != itEnd; ++it ) {
+                if( filterGroup.shouldInclude( *it ) ) {
+                    testsRunForGroup++;
+                    if( m_testsAlreadyRun.find( *it ) == m_testsAlreadyRun.end() ) {
+
+                        if( context.aborting() )
+                            break;
+
+                        totals += context.runTest( *it );
+                        m_testsAlreadyRun.insert( *it );
                     }
                 }
             }
-            result = static_cast<int>( runner.getTotals().assertions.failed );
-        }
-        Catch::Context::cleanUp();
-        return result;
-    }
+            if( testsRunForGroup == 0 && !filterGroup.getName().empty() )
+                m_reporter->noMatchingTestCases( filterGroup.getName() );
+            return totals;
 
-    inline void showUsage( std::ostream& os ) {
-        os  << "\t-?, -h, --help\n"
-            << "\t-l, --list <tests | reporters> [xml]\n"
-            << "\t-t, --test <testspec> [<testspec>...]\n"
-            << "\t-r, --reporter <reporter name>\n"
-            << "\t-o, --out <file name>|<%stream name>\n"
-            << "\t-s, --success\n"
-            << "\t-b, --break\n"
-            << "\t-n, --name <name>\n"
-            << "\t-a, --abort [#]\n"
-            << "\t-nt, --nothrow\n\n"
-            << "For more detail usage please see: https://github.com/philsquared/Catch/wiki/Command-line" << std::endl;    
-    }
-    inline void showHelp( std::string exeName ) {
-        std::string::size_type pos = exeName.find_last_of( "/\\" );
-        if( pos != std::string::npos ) {
-            exeName = exeName.substr( pos+1 );
         }
 
-        std::cout << exeName << " is a CATCH host application. Options are as follows:\n\n";
-        showUsage( std::cout );
-    }
-    
-    inline int Main( int argc, char* const argv[], Config& config ) {
-
-        try {
-            CommandParser parser( argc, argv );
-        
-            if( Command cmd = parser.find( "-h", "-?", "--help" ) ) {
-                if( cmd.argsCount() != 0 )
-                    cmd.raiseError( "Does not accept arguments" );
-
-                showHelp( argv[0] );
-                Catch::Context::cleanUp();        
-                return 0;
+    private:
+        void openStream() {
+            // Open output file, if specified
+            if( !m_config->getFilename().empty() ) {
+                m_ofs.open( m_config->getFilename().c_str() );
+                if( m_ofs.fail() ) {
+                    std::ostringstream oss;
+                    oss << "Unable to open file: '" << m_config->getFilename() << "'";
+                    throw std::domain_error( oss.str() );
+                }
+                m_config->setStreamBuf( m_ofs.rdbuf() );
             }
-        
-            parseIntoConfig( parser, config.data() );            
         }
-        catch( std::exception& ex ) {
-            std::cerr << ex.what() << "\n\nUsage: ...\n\n";
-            showUsage( std::cerr );
-            Catch::Context::cleanUp();
-            return (std::numeric_limits<int>::max)();
+        void makeReporter() {
+            std::string reporterName = m_config->getReporterName().empty()
+                ? "console"
+                : m_config->getReporterName();
+
+            m_reporter = getRegistryHub().getReporterRegistry().create( reporterName, m_config.get() );
+            if( !m_reporter ) {
+                std::ostringstream oss;
+                oss << "No reporter registered with name: '" << reporterName << "'";
+                throw std::domain_error( oss.str() );
+            }
         }
-                
-        return Main( config );
-    }
-    
-    inline int Main( int argc, char* const argv[] ) {
-        Config config;
-// !TBD: This doesn't always work, for some reason
-//        if( isDebuggerActive() )
-//            config.useStream( "debug" );
-        return Main( argc, argv, config );
-    }
-    
+
+    private:
+        Ptr<Config> m_config;
+        std::ofstream m_ofs;
+        Ptr<IStreamingReporter> m_reporter;
+        std::set<TestCase> m_testsAlreadyRun;
+    };
+
+    class Session {
+        static bool alreadyInstantiated;
+
+    public:
+
+        struct OnUnusedOptions { enum DoWhat { Ignore, Fail }; };
+
+        Session()
+        : m_cli( makeCommandLineParser() ) {
+            if( alreadyInstantiated ) {
+                std::string msg = "Only one instance of Catch::Session can ever be used";
+                std::cerr << msg << std::endl;
+                throw std::logic_error( msg );
+            }
+            alreadyInstantiated = true;
+        }
+        ~Session() {
+            Catch::cleanUp();
+        }
+
+        void showHelp( std::string const& processName ) {
+            std::cout << "\nCatch v"    << libraryVersion.majorVersion << "."
+                                        << libraryVersion.minorVersion << " build "
+                                        << libraryVersion.buildNumber;
+            if( libraryVersion.branchName != "master" )
+                std::cout << " (" << libraryVersion.branchName << " branch)";
+            std::cout << "\n";
+
+            m_cli.usage( std::cout, processName );
+            std::cout << "For more detail usage please see the project docs\n" << std::endl;
+        }
+
+        int applyCommandLine( int argc, char* const argv[], OnUnusedOptions::DoWhat unusedOptionBehaviour = OnUnusedOptions::Fail ) {
+            try {
+                m_unusedTokens = m_cli.parseInto( argc, argv, m_configData );
+                if( unusedOptionBehaviour == OnUnusedOptions::Fail )
+                    enforceNoUsedTokens();
+                if( m_configData.showHelp )
+                    showHelp( m_configData.processName );
+                m_config.reset();
+            }
+            catch( std::exception& ex ) {
+                {
+                    Colour colourGuard( Colour::Red );
+                    std::cerr   << "\nError in input:\n"
+                                << Text( ex.what(), TextAttributes().setIndent(2) )
+                                << "\n\n";
+                }
+                m_cli.usage( std::cout, m_configData.processName );
+                return (std::numeric_limits<int>::max)();
+            }
+            return 0;
+        }
+
+        void useConfigData( ConfigData const& _configData ) {
+            m_configData = _configData;
+            m_config.reset();
+        }
+
+        void enforceNoUsedTokens() const {
+            if( !m_unusedTokens.empty() ) {
+                std::vector<Clara::Parser::Token>::const_iterator
+                    it = m_unusedTokens.begin(),
+                    itEnd = m_unusedTokens.end();
+                std::string msg;
+                for(; it != itEnd; ++it )
+                    msg += "  unrecognised option: " + it->data + "\n";
+                throw std::runtime_error( msg.substr( 0, msg.size()-1 ) );
+            }
+        }
+
+        int run( int argc, char* const argv[] ) {
+
+            int returnCode = applyCommandLine( argc, argv );
+            if( returnCode == 0 )
+                returnCode = run();
+            return returnCode;
+        }
+
+        int run() {
+            if( m_configData.showHelp )
+                return 0;
+
+            try
+            {
+                config(); // Force config to be constructed
+                Runner runner( m_config );
+
+                // Handle list request
+                if( Option<std::size_t> listed = list( config() ) )
+                    return static_cast<int>( *listed );
+
+                return static_cast<int>( runner.runTests().assertions.failed );
+            }
+            catch( std::exception& ex ) {
+                std::cerr << ex.what() << std::endl;
+                return (std::numeric_limits<int>::max)();
+            }
+        }
+
+        Clara::CommandLine<ConfigData> const& cli() const {
+            return m_cli;
+        }
+        std::vector<Clara::Parser::Token> const& unusedTokens() const {
+            return m_unusedTokens;
+        }
+        ConfigData& configData() {
+            return m_configData;
+        }
+        Config& config() {
+            if( !m_config )
+                m_config = new Config( m_configData );
+            return *m_config;
+        }
+
+    private:
+        Clara::CommandLine<ConfigData> m_cli;
+        std::vector<Clara::Parser::Token> m_unusedTokens;
+        ConfigData m_configData;
+        Ptr<Config> m_config;
+    };
+
+    bool Session::alreadyInstantiated = false;
+
 } // end namespace Catch
 
 #endif // TWOBLUECUBES_CATCH_RUNNER_HPP_INCLUDED

@@ -16,32 +16,33 @@
 namespace Catch {
     class XmlReporter : public SharedImpl<IReporter> {
     public:
-        XmlReporter( const ReporterConfig& config ) : m_config( config ) {}
+        XmlReporter( ReporterConfig const& config ) : m_config( config ), m_sectionDepth( 0 ) {}
 
         static std::string getDescription() {
             return "Reports test results as an XML document";
         }
-        
+        virtual ~XmlReporter();
+
     private: // IReporter
 
         virtual bool shouldRedirectStdout() const {
             return true;
-        }        
+        }
 
         virtual void StartTesting() {
-            m_xml = XmlWriter( m_config.stream );
+            m_xml = XmlWriter( m_config.stream() );
             m_xml.startElement( "Catch" );
-            if( !m_config.name.empty() )
-                m_xml.writeAttribute( "name", m_config.name );
+            if( !m_config.fullConfig()->name().empty() )
+                m_xml.writeAttribute( "name", m_config.fullConfig()->name() );
         }
-        
+
         virtual void EndTesting( const Totals& totals ) {
             m_xml.scopedElement( "OverallResults" )
                 .writeAttribute( "successes", totals.assertions.passed )
                 .writeAttribute( "failures", totals.assertions.failed );
             m_xml.endElement();
         }
-        
+
         virtual void StartGroup( const std::string& groupName ) {
             m_xml.startElement( "Group" )
                 .writeAttribute( "name", groupName );
@@ -53,61 +54,67 @@ namespace Catch {
                 .writeAttribute( "failures", totals.assertions.failed );
             m_xml.endElement();
         }
-        
+
         virtual void StartSection( const std::string& sectionName, const std::string& description ) {
-            m_xml.startElement( "Section" )
-                .writeAttribute( "name", sectionName )
-                .writeAttribute( "description", description );
+            if( m_sectionDepth++ > 0 ) {
+                m_xml.startElement( "Section" )
+                    .writeAttribute( "name", sectionName )
+                    .writeAttribute( "description", description );
+            }
         }
+        virtual void NoAssertionsInSection( const std::string& ) {}
+        virtual void NoAssertionsInTestCase( const std::string& ) {}
 
         virtual void EndSection( const std::string& /*sectionName*/, const Counts& assertions ) {
-            m_xml.scopedElement( "OverallResults" )
-                .writeAttribute( "successes", assertions.passed )
-                .writeAttribute( "failures", assertions.failed );
-            m_xml.endElement();
+            if( --m_sectionDepth > 0 ) {
+                m_xml.scopedElement( "OverallResults" )
+                    .writeAttribute( "successes", assertions.passed )
+                    .writeAttribute( "failures", assertions.failed );
+                m_xml.endElement();
+            }
         }
-        
+
         virtual void StartTestCase( const Catch::TestCaseInfo& testInfo ) {
-            m_xml.startElement( "TestCase" ).writeAttribute( "name", testInfo.getName() );
+            m_xml.startElement( "TestCase" ).writeAttribute( "name", testInfo.name );
             m_currentTestSuccess = true;
         }
-        
-        virtual void Result( const Catch::ResultInfo& resultInfo ) {
-            if( !m_config.includeSuccessfulResults && resultInfo.getResultType() == ResultWas::Ok )
+
+        virtual void Result( const Catch::AssertionResult& assertionResult ) {
+            if( !m_config.fullConfig()->includeSuccessfulResults() && assertionResult.getResultType() == ResultWas::Ok )
                 return;
 
-            if( resultInfo.hasExpression() ) {
+            if( assertionResult.hasExpression() ) {
                 m_xml.startElement( "Expression" )
-                    .writeAttribute( "success", resultInfo.ok() )
-                    .writeAttribute( "filename", resultInfo.getFilename() )
-                    .writeAttribute( "line", resultInfo.getLine() );
-                
+                    .writeAttribute( "success", assertionResult.succeeded() )
+                    .writeAttribute( "filename", assertionResult.getSourceInfo().file )
+                    .writeAttribute( "line", assertionResult.getSourceInfo().line );
+
                 m_xml.scopedElement( "Original" )
-                    .writeText( resultInfo.getExpression() );
+                    .writeText( assertionResult.getExpression() );
                 m_xml.scopedElement( "Expanded" )
-                    .writeText( resultInfo.getExpandedExpression() );
-                m_currentTestSuccess &= resultInfo.ok();
+                    .writeText( assertionResult.getExpandedExpression() );
+                m_currentTestSuccess &= assertionResult.succeeded();
             }
-            
-            switch( resultInfo.getResultType() ) {
+
+            switch( assertionResult.getResultType() ) {
                 case ResultWas::ThrewException:
                     m_xml.scopedElement( "Exception" )
-                        .writeAttribute( "filename", resultInfo.getFilename() )
-                        .writeAttribute( "line", resultInfo.getLine() )
-                        .writeText( resultInfo.getMessage() );
+                        .writeAttribute( "filename", assertionResult.getSourceInfo().file )
+                        .writeAttribute( "line", assertionResult.getSourceInfo().line )
+                        .writeText( assertionResult.getMessage() );
                     m_currentTestSuccess = false;
                     break;
                 case ResultWas::Info:
                     m_xml.scopedElement( "Info" )
-                        .writeText( resultInfo.getMessage() );
+                        .writeText( assertionResult.getMessage() );
                     break;
                 case ResultWas::Warning:
                     m_xml.scopedElement( "Warning" )
-                        .writeText( resultInfo.getMessage() );
+                        .writeText( assertionResult.getMessage() );
                     break;
                 case ResultWas::ExplicitFailure:
                     m_xml.scopedElement( "Failure" )
-                        .writeText( resultInfo.getMessage() );
+                        .writeText( assertionResult.getMessage() );
                     m_currentTestSuccess = false;
                     break;
                 case ResultWas::Unknown:
@@ -116,26 +123,26 @@ namespace Catch {
                 case ResultWas::ExpressionFailed:
                 case ResultWas::Exception:
                 case ResultWas::DidntThrowException:
-                default:
                     break;
-            }            
-            if( resultInfo.hasExpression() )
+            }
+            if( assertionResult.hasExpression() )
                 m_xml.endElement();
         }
 
         virtual void Aborted() {
             // !TBD
         }
-        
+
         virtual void EndTestCase( const Catch::TestCaseInfo&, const Totals&, const std::string&, const std::string& ) {
             m_xml.scopedElement( "OverallResult" ).writeAttribute( "success", m_currentTestSuccess );
             m_xml.endElement();
-        }    
-                
+        }
+
     private:
         ReporterConfig m_config;
         bool m_currentTestSuccess;
         XmlWriter m_xml;
+        int m_sectionDepth;
     };
 
 } // end namespace Catch

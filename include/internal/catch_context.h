@@ -8,8 +8,8 @@
 #ifndef TWOBLUECUBES_CATCH_CONTEXT_H_INCLUDED
 #define TWOBLUECUBES_CATCH_CONTEXT_H_INCLUDED
 
-#include "catch_interfaces_reporter.h"
-#include "catch_interfaces_config.h"
+#include "catch_interfaces_generators.h"
+#include "catch_ptr.hpp"
 
 #include <memory>
 #include <vector>
@@ -17,79 +17,37 @@
 
 namespace Catch {
 
-    class TestCaseInfo;
+    class TestCase;
+    class Stream;
     struct IResultCapture;
-    struct ITestCaseRegistry;
     struct IRunner;
-    struct IExceptionTranslatorRegistry;
-    class GeneratorsForTest;
+    struct IGeneratorsForTest;
+    struct IConfig;
 
-    class StreamBufBase : public std::streambuf{};
-    
     struct IContext
     {
-        virtual ~IContext(){}
-        
+        virtual ~IContext();
+
         virtual IResultCapture& getResultCapture() = 0;
         virtual IRunner& getRunner() = 0;
-        virtual IReporterRegistry& getReporterRegistry() = 0;
-        virtual ITestCaseRegistry& getTestCaseRegistry() = 0;
-        virtual IExceptionTranslatorRegistry& getExceptionTranslatorRegistry() = 0;
-        virtual size_t getGeneratorIndex( const std::string& fileInfo, size_t totalSize ) = 0;
+        virtual size_t getGeneratorIndex( std::string const& fileInfo, size_t totalSize ) = 0;
         virtual bool advanceGeneratorsForCurrentTest() = 0;
-        virtual const IConfig* getConfig() const = 0;
+        virtual Ptr<IConfig const> getConfig() const = 0;
     };
-    
+
     struct IMutableContext : IContext
     {
+        virtual ~IMutableContext();
         virtual void setResultCapture( IResultCapture* resultCapture ) = 0;
         virtual void setRunner( IRunner* runner ) = 0;
-        virtual void setConfig( const IConfig* config ) = 0;
+        virtual void setConfig( Ptr<IConfig const> const& config ) = 0;
     };
 
     IContext& getCurrentContext();
-    IMutableContext& getCurrentMutableContext();    
+    IMutableContext& getCurrentMutableContext();
+    void cleanUpContext();
+    Stream createStream( std::string const& streamName );
 
-    class Context : public IMutableContext {
-    
-        Context();
-        Context( const Context& );
-        void operator=( const Context& );
-
-    public: // IContext
-        virtual IResultCapture& getResultCapture();
-        virtual IRunner& getRunner();
-        virtual IReporterRegistry& getReporterRegistry();
-        virtual ITestCaseRegistry& getTestCaseRegistry();
-        virtual IExceptionTranslatorRegistry& getExceptionTranslatorRegistry();
-        virtual size_t getGeneratorIndex( const std::string& fileInfo, size_t totalSize );
-        virtual bool advanceGeneratorsForCurrentTest();
-        virtual const IConfig* getConfig() const;
-
-    public: // IMutableContext
-        virtual void setResultCapture( IResultCapture* resultCapture );
-        virtual void setRunner( IRunner* runner );
-        virtual void setConfig( const IConfig* config );
-    
-    public: // Statics
-        static std::streambuf* createStreamBuf( const std::string& streamName );        
-        static void cleanUp();
-        
-        friend IMutableContext& getCurrentMutableContext();
-
-    private:
-        GeneratorsForTest* findGeneratorsForCurrentTest();        
-        GeneratorsForTest& getGeneratorsForCurrentTest();
-
-    private:        
-        std::auto_ptr<IReporterRegistry> m_reporterRegistry;
-        std::auto_ptr<ITestCaseRegistry> m_testCaseRegistry;
-        std::auto_ptr<IExceptionTranslatorRegistry> m_exceptionTranslatorRegistry;
-        IRunner* m_runner;
-        IResultCapture* m_resultCapture;
-        const IConfig* m_config;
-        std::map<std::string, GeneratorsForTest*> m_generatorsByTestName;
-    };
 }
 
 #endif // TWOBLUECUBES_CATCH_CONTEXT_H_INCLUDED

@@ -9,175 +9,135 @@
 #define TWOBLUECUBES_CATCH_COMMANDLINE_HPP_INCLUDED
 
 #include "catch_config.hpp"
-#include "catch_runner_impl.hpp"
+#include "catch_common.h"
+#include "clara.h"
 
 #include <iterator>
 
 namespace Catch {
 
-    class Command {
-    public:
-        Command(){}
-        
-        explicit Command( const std::string& name ) : m_name( name ) {}
-                
-        Command& operator += ( const std::string& arg ) {
-            m_args.push_back( arg );
-            return *this;
-        }
-        Command& operator += ( const Command& other ) {
-            std::copy( other.m_args.begin(), other.m_args.end(), std::back_inserter( m_args ) );
-            if( m_name.empty() )
-                m_name = other.m_name;
-            return *this;
-        }
-        Command operator + ( const Command& other ) {
-            Command newCommand( *this );
-            newCommand += other;
-            return newCommand;
-        }
-        
-        operator SafeBool::type() const {
-            return SafeBool::makeSafe( !m_name.empty() );
-        }
-        
-        std::string name() const { return m_name; }
-        std::string operator[]( std::size_t i ) const { return m_args[i]; }
-        std::size_t argsCount() const { return m_args.size(); }
-        
-        void raiseError( const std::string& message ) const {
-            std::ostringstream oss;
-            oss << "Error while parsing " << m_name << ". " << message << ".";
-            if( m_args.size() > 0 )
-                oss << " Arguments where:";
-            for( std::size_t i = 0; i < m_args.size(); ++i )
-                oss << " " << m_args[i];
-            throw std::domain_error( oss.str() );
-        }
-        
-    private:
-        
-        std::string m_name;
-        std::vector<std::string> m_args;
-    };
-    
-    class CommandParser {
-    public:
-        CommandParser( int argc, char const * const * argv ) : m_argc( static_cast<std::size_t>( argc ) ), m_argv( argv ) {}
+    inline void abortAfterFirst( ConfigData& config ) { config.abortAfter = 1; }
+    inline void abortAfterX( ConfigData& config, int x ) {
+        if( x < 1 )
+            throw std::runtime_error( "Value after -x or --abortAfter must be greater than zero" );
+        config.abortAfter = x;
+    }
+    inline void addTestOrTags( ConfigData& config, std::string const& _testSpec ) { config.testsOrTags.push_back( _testSpec ); }
 
-        Command find( const std::string& arg1,  const std::string& arg2, const std::string& arg3 ) const {
-            return find( arg1 ) + find( arg2 ) + find( arg3 );
-        }
-
-        Command find( const std::string& shortArg, const std::string& longArg ) const {
-            return find( shortArg ) + find( longArg );
-        }
-        Command find( const std::string& arg ) const {
-            for( std::size_t i = 0; i < m_argc; ++i  )
-                if( m_argv[i] == arg )
-                    return getArgs( i );
-            return Command();
-        }
-        
-    private:
-        Command getArgs( std::size_t from ) const {
-            Command command( m_argv[from] );
-            for( std::size_t i = from+1; i < m_argc && m_argv[i][0] != '-'; ++i  )
-                command += m_argv[i];
-            return command;
-        }
-        
-        std::size_t m_argc;
-        char const * const * m_argv;
-    };
-   
-    inline void parseIntoConfig( const CommandParser& parser, ConfigData& config ) {
-        
-        if( Command cmd = parser.find( "-l", "--list" ) ) {
-            if( cmd.argsCount() > 2 )
-                cmd.raiseError( "Expected upto 2 arguments" );
-
-            List::What listSpec = List::All;
-            if( cmd.argsCount() >= 1 ) {
-                if( cmd[0] == "tests" )
-                    config.listSpec = List::Tests;
-                else if( cmd[0] == "reporters" )
-                    config.listSpec = List::Reports;
-                else
-                    cmd.raiseError( "Expected [tests] or [reporters]" );
-            }
-            if( cmd.argsCount() >= 2 ) {
-                if( cmd[1] == "xml" )
-                    config.listSpec = static_cast<List::What>( listSpec | List::AsXml );
-                else if( cmd[1] == "text" )
-                    config.listSpec = static_cast<List::What>( listSpec | List::AsText );
-                else
-                    cmd.raiseError( "Expected [xml] or [text]" );
-            }
-        }
-                            
-        if( Command cmd = parser.find( "-t", "--test" ) ) {
-            if( cmd.argsCount() == 0 )
-                cmd.raiseError( "Expected at least one argument" );
-            for( std::size_t i = 0; i < cmd.argsCount(); ++i )
-                config.testSpecs.push_back( cmd[i] );
-        }
-        
-        if( Command cmd = parser.find( "-r", "--reporter" ) ) {
-            if( cmd.argsCount() != 1 )
-                cmd.raiseError( "Expected one argument" );
-            config.reporter = cmd[0];
-        }
-        
-        if( Command cmd = parser.find( "-o", "--out" ) ) {
-            if( cmd.argsCount() == 0 )
-                cmd.raiseError( "Expected filename" );
-            if( cmd[0][0] == '%' )
-                config.stream = cmd[0].substr( 1 );
-            else
-                config.outputFilename = cmd[0];
-        }
-
-        if( Command cmd = parser.find( "-s", "--success" ) ) {
-            if( cmd.argsCount() != 0 )
-                cmd.raiseError( "Does not accept arguments" );
-            config.includeWhichResults = Include::SuccessfulResults;
-        }
-        
-        if( Command cmd = parser.find( "-b", "--break" ) ) {
-            if( cmd.argsCount() != 0 )
-                cmd.raiseError( "Does not accept arguments" );
-            config.shouldDebugBreak = true;
-        }
-
-        if( Command cmd = parser.find( "-n", "--name" ) ) {
-            if( cmd.argsCount() != 1 )
-                cmd.raiseError( "Expected a name" );
-            config.name = cmd[0];
-        }
-
-        if( Command cmd = parser.find( "-a", "--abort" ) ) {
-            if( cmd.argsCount() > 1 )
-                cmd.raiseError( "Only accepts 0-1 arguments" );
-            int threshold = 1;
-            if( cmd.argsCount() == 1 ) {
-                std::stringstream ss;
-                ss << cmd[0];
-                ss >> threshold;
-                if( ss.fail() || threshold <= 0 )
-                    cmd.raiseError( "threshold must be a number greater than zero" );
-            }
-            config.cutoff = threshold;
-        }
-
-        if( Command cmd = parser.find( "-nt", "--nothrow" ) ) {
-            if( cmd.argsCount() != 0 )
-                cmd.raiseError( "Does not accept arguments" );
-            config.allowThrows = false;
-        }
+    inline void addWarning( ConfigData& config, std::string const& _warning ) {
+        if( _warning == "NoAssertions" )
+            config.warnings = (WarnAbout::What)( config.warnings | WarnAbout::NoAssertions );
+        else
+            throw std::runtime_error( "Unrecognised warning: '" + _warning + "'" );
 
     }
-        
+    inline void setVerbosity( ConfigData& config, int level ) {
+        // !TBD: accept strings?
+        config.verbosity = (Verbosity::Level)level;
+    }
+    inline void setShowDurations( ConfigData& config, bool _showDurations ) {
+        config.showDurations = _showDurations
+            ? ShowDurations::Always
+            : ShowDurations::Never;
+    }
+    
+
+    inline Clara::CommandLine<ConfigData> makeCommandLineParser() {
+
+        Clara::CommandLine<ConfigData> cli;
+
+        cli.bindProcessName( &ConfigData::processName );
+
+        cli.bind( &ConfigData::showHelp )
+            .describe( "display usage information" )
+            .shortOpt( "?")
+            .shortOpt( "h")
+            .longOpt( "help" );
+
+        cli.bind( &ConfigData::listTests )
+            .describe( "list all (or matching) test cases" )
+            .shortOpt( "l")
+            .longOpt( "list-tests" );
+
+        cli.bind( &ConfigData::listTags )
+            .describe( "list all (or matching) tags" )
+            .shortOpt( "t")
+            .longOpt( "list-tags" );
+
+        cli.bind( &ConfigData::listReporters )
+            .describe( "list all reporters" )
+            .longOpt( "list-reporters" );
+
+        cli.bind( &ConfigData::showSuccessfulTests )
+            .describe( "include successful tests in output" )
+            .shortOpt( "s")
+            .longOpt( "success" );
+
+        cli.bind( &ConfigData::shouldDebugBreak )
+            .describe( "break into debugger on failure" )
+            .shortOpt( "b")
+            .longOpt( "break" );
+
+        cli.bind( &ConfigData::noThrow )
+            .describe( "skip exception tests" )
+            .shortOpt( "e")
+            .longOpt( "nothrow" );
+
+        cli.bind( &ConfigData::outputFilename )
+            .describe( "output filename" )
+            .shortOpt( "o")
+            .longOpt( "out" )
+            .hint( "filename" );
+
+        cli.bind( &ConfigData::reporterName )
+            .describe( "reporter to use - defaults to console" )
+            .shortOpt( "r")
+            .longOpt( "reporter" )
+//            .hint( "name[:filename]" );
+            .hint( "name" );
+
+        cli.bind( &ConfigData::name )
+            .describe( "suite name" )
+            .shortOpt( "n")
+            .longOpt( "name" )
+            .hint( "name" );
+
+        cli.bind( &abortAfterFirst )
+            .describe( "abort at first failure" )
+            .shortOpt( "a")
+            .longOpt( "abort" );
+
+        cli.bind( &abortAfterX )
+            .describe( "abort after x failures" )
+            .shortOpt( "x")
+            .longOpt( "abortx" )
+            .hint( "number of failures" );
+
+        cli.bind( &addWarning )
+            .describe( "enable warnings" )
+            .shortOpt( "w")
+            .longOpt( "warn" )
+            .hint( "warning name" );
+
+//        cli.bind( &setVerbosity )
+//            .describe( "level of verbosity (0=no output)" )
+//            .shortOpt( "v")
+//            .longOpt( "verbosity" )
+//            .hint( "level" );
+
+        cli.bind( &addTestOrTags )
+            .describe( "which test or tests to use" )
+            .hint( "test name, pattern or tags" );
+
+        cli.bind( &setShowDurations )
+            .describe( "show test durations" )
+            .shortOpt( "d")
+            .longOpt( "durations" )
+            .hint( "yes/no" );
+
+        return cli;
+    }
+
 } // end namespace Catch
 
 #endif // TWOBLUECUBES_CATCH_COMMANDLINE_HPP_INCLUDED

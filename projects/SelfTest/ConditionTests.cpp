@@ -1,14 +1,13 @@
 /*
- *  ConditionTests.cpp
- *  Catch - Test
- *
  *  Created by Phil on 08/11/2010.
  *  Copyright 2010 Two Blue Cubes Ltd. All rights reserved.
  *
  *  Distributed under the Boost Software License, Version 1.0. (See accompanying
  *  file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
- *
  */
+#ifdef __clang__
+#pragma clang diagnostic ignored "-Wpadded"
+#endif
 
 #include "catch.hpp"
 
@@ -39,14 +38,6 @@ struct TestDef {
     }
     
 };
-
-//TEST( "./succeeding/conditions/equality"  + Description("nyaya") )
-//{
-//    TEST_CASE( [Name("inner")] )
-//    {
-//        
-//    }
-//}
 
 // The "failing" tests all use the CHECK macro, which continues if the specific test fails.
 // This allows us to see all results, even if an earlier check fails
@@ -213,10 +204,15 @@ TEST_CASE(  "./succeeding/conditions/int literals",
 
 // Disable warnings about sign conversions for the next two tests
 // (as we are deliberately invoking them)
-// - Current only disabled for GCC/ LLVM. Should add VC++ too
+// - Currently only disabled for GCC/ LLVM. Should add VC++ too
+#ifdef  __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsign-compare"
 #pragma GCC diagnostic ignored "-Wsign-conversion"
+#endif
+#ifdef _MSC_VER
+#pragma warning(disable:4389) // '==' : signed/unsigned mismatch
+#endif
 
 TEST_CASE(  "./succeeding/conditions//long_to_unsigned_x",
             "comparisons between int variables" )
@@ -231,6 +227,20 @@ TEST_CASE(  "./succeeding/conditions//long_to_unsigned_x",
 	REQUIRE( long_var == unsigned_short_var );
 	REQUIRE( long_var == unsigned_int_var );
 	REQUIRE( long_var == unsigned_long_var );
+}
+
+TEST_CASE(  "./succeeding/conditions/const ints to int literal",
+            "comparisons between const int variables" )
+{
+	const unsigned char     unsigned_char_var = 1;
+	const unsigned short    unsigned_short_var = 1;
+	const unsigned int      unsigned_int_var = 1;
+	const unsigned long     unsigned_long_var = 1L;
+
+	REQUIRE( unsigned_char_var == 1 );
+	REQUIRE( unsigned_short_var == 1 );
+	REQUIRE( unsigned_int_var == 1 );
+	REQUIRE( unsigned_long_var == 1 );
 }
 
 TEST_CASE(  "./succeeding/conditions/negative ints",
@@ -262,8 +272,9 @@ TEST_CASE(  "./succeeding/conditions/computed ints",
      CHECK( 54 == 6*9 );
 }
 
+#ifdef  __GNUC__
 #pragma GCC diagnostic pop
-
+#endif
 
 inline const char* returnsConstNull(){ return NULL; }
 inline char* returnsNull(){ return NULL; }

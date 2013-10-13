@@ -9,6 +9,9 @@
 #ifndef TWOBLUECUBES_CATCH_STREAM_HPP_INCLUDED
 #define TWOBLUECUBES_CATCH_STREAM_HPP_INCLUDED
 
+#include "catch_streambuf.h"
+#include "catch_debugger.hpp"
+
 #include <stdexcept>
 #include <cstdio>
 
@@ -18,30 +21,30 @@ namespace Catch {
     class StreamBufImpl : public StreamBufBase {
         char data[bufferSize];
         WriterF m_writer;
-        
+
     public:
         StreamBufImpl() {
             setp( data, data + sizeof(data) );
         }
 
-        ~StreamBufImpl() {
+        ~StreamBufImpl() throw() {
             sync();
         }
-        
+
     private:
-        int	overflow( int c ) {
+        int overflow( int c ) {
             sync();
-            
+
             if( c != EOF ) {
                 if( pbase() == epptr() )
                     m_writer( std::string( 1, static_cast<char>( c ) ) );
                 else
                     sputc( static_cast<char>( c ) );
-            }            
+            }
             return 0;
         }
-        
-        int	sync() {
+
+        int sync() {
             if( pbase() != pptr() ) {
                 m_writer( std::string( pbase(), static_cast<std::string::size_type>( pptr() - pbase() ) ) );
                 setp( pbase(), epptr() );
@@ -49,14 +52,38 @@ namespace Catch {
             return 0;
         }
     };
-    
+
     ///////////////////////////////////////////////////////////////////////////
 
     struct OutputDebugWriter {
-    
-        void operator()( const std::string &str ) {
+
+        void operator()( std::string const&str ) {
             writeToDebugConsole( str );
         }
+    };
+
+    class Stream {
+    public:
+        Stream()
+        : streamBuf( NULL ), isOwned( false )
+        {}
+
+        Stream( std::streambuf* _streamBuf, bool _isOwned )
+        : streamBuf( _streamBuf ), isOwned( _isOwned )
+        {}
+
+        void release() {
+            if( isOwned ) {
+                delete streamBuf;
+                streamBuf = NULL;
+                isOwned = false;
+            }
+        }
+
+        std::streambuf* streamBuf;
+
+    private:
+        bool isOwned;
     };
 }
 

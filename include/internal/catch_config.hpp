@@ -5,159 +5,171 @@
  *  Distributed under the Boost Software License, Version 1.0. (See accompanying
  *  file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
  */
-#ifndef TWOBLUECUBES_CATCH_RUNNERCONFIG_HPP_INCLUDED
-#define TWOBLUECUBES_CATCH_RUNNERCONFIG_HPP_INCLUDED
+#ifndef TWOBLUECUBES_CATCH_CONFIG_HPP_INCLUDED
+#define TWOBLUECUBES_CATCH_CONFIG_HPP_INCLUDED
 
-#include "catch_interfaces_reporter.h"
+#include "catch_test_spec.h"
 #include "catch_context.h"
+#include "catch_interfaces_config.h"
+#include "catch_stream.hpp"
 
 #include <memory>
 #include <vector>
 #include <string>
 #include <iostream>
 
+#ifndef CATCH_CONFIG_CONSOLE_WIDTH
+#define CATCH_CONFIG_CONSOLE_WIDTH 80
+#endif
+
 namespace Catch {
 
-    struct Include { enum WhichResults {
-        FailedOnly, 
-        SuccessfulResults
-    }; };
-
-    struct List{ enum What {
-        None = 0,
-        
-        Reports = 1,
-        Tests = 2,
-        All = 3,
-        
-        WhatMask = 0xf,
-        
-        AsText = 0x10,
-        AsXml = 0x11,
-        
-        AsMask = 0xf0
-    }; };
-    
     struct ConfigData {
+
         ConfigData()
-        :   listSpec( List::None ),
+        :   listTests( false ),
+            listTags( false ),
+            listReporters( false ),
+            showSuccessfulTests( false ),
             shouldDebugBreak( false ),
-            includeWhichResults( Include::FailedOnly ),
-            cutoff( -1 ),
-            allowThrows( true )
+            noThrow( false ),
+            showHelp( false ),
+            abortAfter( -1 ),
+            verbosity( Verbosity::Normal ),
+            warnings( WarnAbout::Nothing ),
+            showDurations( ShowDurations::DefaultForReporter )
         {}
-        
-        std::string reporter;
-        std::string outputFilename;
-        List::What listSpec;
-        std::vector<std::string> testSpecs;
+
+        bool listTests;
+        bool listTags;
+        bool listReporters;
+
+        bool showSuccessfulTests;
         bool shouldDebugBreak;
-        std::string stream;
-        Include::WhichResults includeWhichResults;
+        bool noThrow;
+        bool showHelp;
+
+        int abortAfter;
+
+        Verbosity::Level verbosity;
+        WarnAbout::What warnings;
+        ShowDurations::OrNot showDurations;
+
+        std::string reporterName;
+        std::string outputFilename;
         std::string name;
-        int cutoff;
-        bool allowThrows;
+        std::string processName;
+
+        std::vector<std::string> testsOrTags;
     };
-    
-    
-    class Config : public IConfig {
+
+
+    class Config : public SharedImpl<IConfig> {
     private:
-        Config( const Config& other );
-        Config& operator = ( const Config& other );
+        Config( Config const& other );
+        Config& operator = ( Config const& other );
+        virtual void dummy();
     public:
-                
+
         Config()
-        :   m_streambuf( NULL ),
-            m_os( std::cout.rdbuf() )
+        :   m_os( std::cout.rdbuf() )
         {}
-        
-        Config( const ConfigData& data )
+
+        Config( ConfigData const& data )
         :   m_data( data ),
-            m_streambuf( NULL ),
             m_os( std::cout.rdbuf() )
-        {}
-        
-        ~Config() {
-            m_os.rdbuf( std::cout.rdbuf() );
-            delete m_streambuf;
+        {
+            if( !data.testsOrTags.empty() ) {
+                std::string groupName;
+                for( std::size_t i = 0; i < data.testsOrTags.size(); ++i ) {
+                    if( i != 0 )
+                        groupName += " ";
+                    groupName += data.testsOrTags[i];
+                }
+                TestCaseFilters filters( groupName );
+                for( std::size_t i = 0; i < data.testsOrTags.size(); ++i ) {
+                    std::string filter = data.testsOrTags[i];
+                    if( startsWith( filter, "[" ) || startsWith( filter, "~[" ) )
+                        filters.addTags( filter );
+                    else
+                        filters.addFilter( TestCaseFilter( filter ) );
+                }
+                m_filterSets.push_back( filters );
+            }
         }
-        
-        void setFilename( const std::string& filename ) {
+
+        virtual ~Config() {
+            m_os.rdbuf( std::cout.rdbuf() );
+            m_stream.release();
+        }
+
+        void setFilename( std::string const& filename ) {
             m_data.outputFilename = filename;
         }
-        
-        bool testsSpecified() const {
-            return !m_data.testSpecs.empty();
-        }
 
-        const std::vector<std::string>& getTestSpecs() const {
-            return m_data.testSpecs;
-        }
-        
-        List::What getListSpec( void ) const {
-            return m_data.listSpec;
-        }
-
-        const std::string& getFilename() const {
+        std::string const& getFilename() const {
             return m_data.outputFilename ;
         }
-        
-        List::What listWhat() const {
-            return static_cast<List::What>( m_data.listSpec & List::WhatMask );
-        }        
-        
-        List::What listAs() const {
-            return static_cast<List::What>( m_data.listSpec & List::AsMask );
+
+        bool listTests() const { return m_data.listTests; }
+        bool listTags() const { return m_data.listTags; }
+        bool listReporters() const { return m_data.listReporters; }
+
+        std::string getProcessName() const {
+            return m_data.processName;
         }
 
-        std::string getName() const {
-            return m_data.name;
-        }
-        
         bool shouldDebugBreak() const {
             return m_data.shouldDebugBreak;
         }
 
-        virtual std::ostream& stream() const {
-            return m_os;
-        }
-        
         void setStreamBuf( std::streambuf* buf ) {
             m_os.rdbuf( buf ? buf : std::cout.rdbuf() );
-        }        
+        }
 
-        void useStream( const std::string& streamName ) {
-            std::streambuf* newBuf = Context::createStreamBuf( streamName );
-            setStreamBuf( newBuf );
-            delete m_streambuf;
-            m_streambuf = newBuf;
+        void useStream( std::string const& streamName ) {
+            Stream stream = createStream( streamName );
+            setStreamBuf( stream.streamBuf );
+            m_stream.release();
+            m_stream = stream;
         }
-        
-        virtual bool includeSuccessfulResults() const {
-            return m_data.includeWhichResults == Include::SuccessfulResults;
+
+        std::string getReporterName() const { return m_data.reporterName; }
+
+        void addTestSpec( std::string const& testSpec ) {
+            TestCaseFilters filters( testSpec );
+            filters.addFilter( TestCaseFilter( testSpec ) );
+            m_filterSets.push_back( filters );
         }
-        
-        int getCutoff() const {
-            return m_data.cutoff;
+
+        int abortAfter() const {
+            return m_data.abortAfter;
         }
-        
-        virtual bool allowThrows() const {
-            return m_data.allowThrows;
+
+        std::vector<TestCaseFilters> const& filters() const {
+            return m_filterSets;
         }
-        
-        ConfigData& data() {
-            return m_data;
-        }
-        
+
+        bool showHelp() const { return m_data.showHelp; }
+
+        // IConfig interface
+        virtual bool allowThrows() const        { return !m_data.noThrow; }
+        virtual std::ostream& stream() const    { return m_os; }
+        virtual std::string name() const        { return m_data.name.empty() ? m_data.processName : m_data.name; }
+        virtual bool includeSuccessfulResults() const   { return m_data.showSuccessfulTests; }
+        virtual bool warnAboutMissingAssertions() const { return m_data.warnings & WarnAbout::NoAssertions; }
+        virtual ShowDurations::OrNot showDurations() const { return m_data.showDurations; }
+
+
     private:
         ConfigData m_data;
-        
-        // !TBD Move these out of here
-        std::streambuf* m_streambuf;
+
+        Stream m_stream;
         mutable std::ostream m_os;
+        std::vector<TestCaseFilters> m_filterSets;
     };
-        
-    
+
+
 } // end namespace Catch
 
-#endif // TWOBLUECUBES_CATCH_RUNNERCONFIG_HPP_INCLUDED
+#endif // TWOBLUECUBES_CATCH_CONFIG_HPP_INCLUDED

@@ -344,11 +344,23 @@
 			Name="TestCases"
 			>
 			<File
+				RelativePath="..\..\..\SelfTest\ApproxTests.cpp"
+				>
+			</File>
+			<File
+				RelativePath="..\..\..\SelfTest\BDDTests.cpp"
+				>
+			</File>
+			<File
 				RelativePath="..\..\..\SelfTest\catch_self_test.cpp"
 				>
 			</File>
 			<File
 				RelativePath="..\..\..\SelfTest\ClassTests.cpp"
+				>
+			</File>
+			<File
+				RelativePath="..\..\..\SelfTest\CmdLineTests.cpp"
 				>
 			</File>
 			<File
@@ -372,7 +384,15 @@
 				>
 			</File>
 			<File
+				RelativePath="..\..\..\SelfTest\SectionTrackerTests.cpp"
+				>
+			</File>
+			<File
 				RelativePath="..\..\..\SelfTest\TrickyTests.cpp"
+				>
+			</File>
+			<File
+				RelativePath="..\..\..\SelfTest\VariadicMacrosTests.cpp"
 				>
 			</File>
 		</Filter>

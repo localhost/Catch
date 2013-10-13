@@ -1,14 +1,14 @@
 /*
- *  TrickyTests.cpp
- *  Catch - Test
- *
  *  Created by Phil on 09/11/2010.
  *  Copyright 2010 Two Blue Cubes Ltd. All rights reserved.
  *
  *  Distributed under the Boost Software License, Version 1.0. (See accompanying
  *  file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
- *
  */
+
+#ifdef __clang__
+#pragma clang diagnostic ignored "-Wpadded"
+#endif
 
 #include "catch.hpp"
 
@@ -33,9 +33,7 @@ TEST_CASE
 {
     std::pair<int, int> aNicePair( 1, 2 );
 
-    // !TBD: would be nice if this could compile without the extra parentheses
-    REQUIRE( (std::pair<int, int>( 1, 2 )) == aNicePair );
-    
+    REQUIRE( (std::pair<int, int>( 1, 2 )) == aNicePair );    
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -45,13 +43,8 @@ TEST_CASE
     "Where the is more to the expression after the RHS"
 )
 {
-    /*
-    int a = 1;
-    int b = 2;
-
-    // This only captures part of the expression, but issues a warning about the rest
-    REQUIRE( a == 2 || b == 2 );
-     */
+//    int a = 1, b = 2;
+//    REQUIRE( a == 2 || b == 2 );
     WARN( "Uncomment the code in this test to check that it gives a sensible compiler error" );
 }
 ///////////////////////////////////////////////////////////////////////////////
@@ -182,7 +175,7 @@ namespace ObjectWithConversions
         "Operators at different namespace levels not hijacked by Koenig lookup"
     )
     {        
-        Object o;        
+        Object o;
         REQUIRE(0xc0000000 == o );
     }
 }
@@ -293,3 +286,97 @@ TEST_CASE( "./sameName", "Tests with the same name are not allowed" )
     
 }
 */
+
+struct Boolable
+{
+    explicit Boolable( bool value ) : m_value( value ) {}
+
+    operator Catch::SafeBool::type() const {
+        return Catch::SafeBool::makeSafe( m_value );
+    }
+
+    bool m_value;
+};
+
+TEST_CASE( "./succeeding/SafeBool", "Objects that evaluated in boolean contexts can be checked")
+{
+    Boolable True( true );
+    Boolable False( false );
+
+    CHECK( True );
+    CHECK( !False );
+    CHECK_FALSE( False );
+}
+
+TEST_CASE( "Assertions then sections", "" )
+{
+    // This was causing a failure due to the way the console reporter was handling
+    // the current section
+    
+    REQUIRE( Catch::isTrue( true ) );
+    
+    SECTION( "A section", "" )
+    {
+        REQUIRE( Catch::isTrue( true ) );
+        
+        SECTION( "Another section", "" )
+        {
+            REQUIRE( Catch::isTrue( true ) );
+        }
+        SECTION( "Another other section", "" )
+        {
+            REQUIRE( Catch::isTrue( true ) );
+        }
+    }
+}
+
+struct Awkward
+{
+    operator int() const { return 7; }
+};
+
+TEST_CASE( "non streamable - with conv. op", "" )
+{
+    Awkward awkward;
+    std::string s = Catch::toString( awkward );
+    REQUIRE( s == "7" );
+}
+
+inline void foo() {}
+
+typedef void (*fooptr_t)();
+
+TEST_CASE( "Comparing function pointers", "[function pointer]" )
+{
+    // This was giving a warning in VS2010
+    // #179
+    fooptr_t a = foo;
+
+    REQUIRE( a );
+    REQUIRE( a == &foo );
+}
+
+class ClassName {};
+
+TEST_CASE( "pointer to class", "" )
+{
+   ClassName *p = 0;
+   REQUIRE( p == 0 );
+}
+
+#ifdef CATCH_CONFIG_CPP11_NULLPTR
+
+#include <memory>
+
+TEST_CASE( "null_ptr", "" )
+{
+    std::unique_ptr<int> ptr;
+    REQUIRE(ptr.get() == nullptr);
+}
+
+#endif
+
+TEST_CASE( "X/level/0/a", "" ) { SUCCEED(""); }
+TEST_CASE( "X/level/0/b", "[fizz]" ) { SUCCEED(""); }
+TEST_CASE( "X/level/1/a", "" ) { SUCCEED(""); }
+TEST_CASE( "X/level/1/b", "" ) { SUCCEED("");}
